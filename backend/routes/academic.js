@@ -126,31 +126,44 @@ router.get('/student-data', appAuthMiddleware, async (req, res) => {
 
         // 6. Loop through subjects and get modal data (Qaib Faizi)
         let subjectsWithGrades = [];
-        // Remove the slice to process all subjects
-        // const subjectsToProcess = subjects.slice(0, req.query.limitSubjects || 3); // Limit for testing
         const subjectsToProcess = subjects; // Process all extracted subjects
         console.log(`ACADEMIC_ROUTE: Will fetch modal data for ${subjectsToProcess.length} subjects.`);
 
         for (const subject of subjectsToProcess) {
             if (!subject.id || !subject.edu_form_id) {
                 console.warn("ACADEMIC_ROUTE: Skipping subject due to missing id or edu_form_id:", subject.name);
-                subjectsWithGrades.push({ name: subject.name || "Unknown Subject", id: subject.id || "N/A", qaibFaizi: 'Data Error (Missing ID/FormID)' });
+                subjectsWithGrades.push({ 
+                    name: subject.name || "Unknown Subject", 
+                    id: subject.id || "N/A", 
+                    edu_form_id: subject.edu_form_id,
+                    qaibFaizi: 'Data Error (Missing ID/FormID)',
+                    currentEvaluation: 'N/A'
+                });
                 continue;
             }
             try {
                 console.log(`ACADEMIC_ROUTE: Fetching modal for subject: ${subject.name} (ID: ${subject.id}, eduFormId: ${subject.edu_form_id})`);
-                // Pass the CSRF token obtained from the subjects page (htmlWithSubjects)
+                
+                // Fetch both qaib faizi and current evaluation from the same modal
                 const modalEvalData = await unecClient.getSubjectModalData(subject.id, subject.edu_form_id, cookieJar, csrfForModals);
+                
                 subjectsWithGrades.push({
                     name: subject.name,
                     id: subject.id,
-                    edu_form_id: subject.edu_form_id, // Keep it for reference
-                    qaibFaizi: modalEvalData.qaibFaizi !== null ? modalEvalData.qaibFaizi : 'N/A'
+                    edu_form_id: subject.edu_form_id,
+                    qaibFaizi: modalEvalData.qaibFaizi !== null ? modalEvalData.qaibFaizi : 'N/A',
+                    currentEvaluation: modalEvalData.currentEvaluation !== undefined ? modalEvalData.currentEvaluation : 'N/A'
                 });
                 await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 200)); // Small delay
             } catch (modalError) {
                 console.error(`ACADEMIC_ROUTE: Error fetching/parsing modal for ${subject.name}: ${modalError.message}`);
-                subjectsWithGrades.push({ name: subject.name, id: subject.id, edu_form_id: subject.edu_form_id, qaibFaizi: 'Fetch Error' });
+                subjectsWithGrades.push({ 
+                    name: subject.name, 
+                    id: subject.id, 
+                    edu_form_id: subject.edu_form_id, 
+                    qaibFaizi: 'Fetch Error',
+                    currentEvaluation: 'Fetch Error'
+                });
             }
         }
         console.log("ACADEMIC_ROUTE: Total processing time:", (Date.now() - fullProcessStartTime)/1000, "s");

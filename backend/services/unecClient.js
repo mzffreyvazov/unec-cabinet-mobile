@@ -106,15 +106,112 @@ function _extractSubjects(html) {
 }
 
 function _extractFinalEvalDataFromModalHtml(modalHtml) {
-    if (!modalHtml) { console.warn('UNEC_CLIENT (Parser): Modal HTML for final eval data is empty.'); return { qaibFaizi: null }; }
-    const $ = cheerio.load(modalHtml); let qaibFaizi = null;
+    if (!modalHtml) { 
+        console.warn('UNEC_CLIENT (Parser): Modal HTML for final eval data is empty.'); 
+        return { qaibFaizi: null, currentEvaluation: null }; 
+    }
+    const $ = cheerio.load(modalHtml); 
+    let qaibFaizi = null;
+    let currentEvaluation = null;
+    
+    // Extract Qaib Faizi from finalEval tab
     const finalEvalDiv = $('#finalEval.tab-pane');
     if (finalEvalDiv.length) {
         const cells = finalEvalDiv.find('table tbody tr').first().find('td');
-        if (cells.length > 14) qaibFaizi = $(cells[14]).text().trim();
-        else console.warn("UNEC_CLIENT (Parser): Not enough cells in finalEval row for Qaib Faizi. Found:", cells.length);
-    } else console.warn("UNEC_CLIENT (Parser): #finalEval div not found in modal HTML.");
-    console.log('UNEC_CLIENT (Parser): Extracted Qaib Faizi:', qaibFaizi); return { qaibFaizi };
+        if (cells.length > 14) {
+            qaibFaizi = $(cells[14]).text().trim();
+        } else {
+            console.warn("UNEC_CLIENT (Parser): Not enough cells in finalEval row for Qaib Faizi. Found:", cells.length);
+        }
+    } else {
+        console.warn("UNEC_CLIENT (Parser): #finalEval div not found in modal HTML.");
+    }
+    
+    // Extract Current Evaluation from currentEval tab (matching extension logic exactly)
+    const currentEvalDiv = $('#currentEval.tab-pane');
+    if (currentEvalDiv.length) {
+        console.log('UNEC_CLIENT (Parser): Found currentEval tab, searching for current evaluation...');
+        
+        // Method 1: Look for table rows with "Cari qiymətləndirmə" label
+        const rows = currentEvalDiv.find('table tbody tr');
+        let found = false;
+        
+        rows.each((i, row) => {
+            if (found) return; // Skip if already found
+            
+            const cells = $(row).find('td');
+            if (cells.length >= 2) {
+                const labelCell = $(cells[0]).text().trim();
+                const valueCell = $(cells[1]).text().trim();
+                
+                console.log(`UNEC_CLIENT (Parser): Checking row ${i}: "${labelCell}" = "${valueCell}"`);
+                
+                // Check for various forms of "Cari qiymətləndirmə"
+                if (labelCell.toLowerCase().includes('cari qiymətləndirmə') ||
+                    labelCell.toLowerCase().includes('cari qiymetlendirme') ||
+                    labelCell.toLowerCase().includes('current evaluation')) {
+                    currentEvaluation = valueCell;
+                    found = true;
+                    console.log('UNEC_CLIENT (Parser): Found current evaluation via table row:', currentEvaluation);
+                }
+            }
+        });
+        
+        // Method 2: If not found in table rows, try finding the text directly
+        if (!found) {
+            const allText = currentEvalDiv.text();
+            console.log('UNEC_CLIENT (Parser): Searching in all text for current evaluation...');
+            
+            // Look for patterns like "Cari qiymətləndirmə: 85" or similar
+            const patterns = [
+                /cari qiymətləndirmə[:\s]*([0-9.]+)/i,
+                /cari qiymetlendirme[:\s]*([0-9.]+)/i,
+                /current evaluation[:\s]*([0-9.]+)/i
+            ];
+            
+            for (const pattern of patterns) {
+                const match = allText.match(pattern);
+                if (match && match[1]) {
+                    currentEvaluation = match[1].trim();
+                    found = true;
+                    console.log('UNEC_CLIENT (Parser): Found current evaluation via pattern matching:', currentEvaluation);
+                    break;
+                }
+            }
+        }
+        
+        // Method 3: Try CSS selector approach (similar to extension)
+        if (!found) {
+            try {
+                const evalElements = currentEvalDiv.find('td:contains("Cari qiymətləndirmə"), td:contains("cari qiymətləndirmə")');
+                if (evalElements.length > 0) {
+                    const nextCell = evalElements.first().next('td');
+                    if (nextCell.length > 0) {
+                        currentEvaluation = nextCell.text().trim();
+                        found = true;
+                        console.log('UNEC_CLIENT (Parser): Found current evaluation via CSS selector:', currentEvaluation);
+                    }
+                }
+            } catch (selectorError) {
+                console.warn('UNEC_CLIENT (Parser): CSS selector approach failed:', selectorError.message);
+            }
+        }
+        
+        if (!found) {
+            console.warn('UNEC_CLIENT (Parser): Could not find current evaluation in currentEval tab');
+            // For debugging, log the structure of the currentEval div
+            console.log('UNEC_CLIENT (Parser): currentEval div HTML structure (first 500 chars):', currentEvalDiv.html().substring(0, 500));
+        }
+        
+    } else {
+        console.warn("UNEC_CLIENT (Parser): #currentEval div not found in modal HTML.");
+        // For debugging, log what tabs are available
+        const availableTabs = $('.tab-pane').map((i, el) => $(el).attr('id')).get();
+        console.log('UNEC_CLIENT (Parser): Available tabs:', availableTabs);
+    }
+    
+    console.log('UNEC_CLIENT (Parser): Final results - Qaib Faizi:', qaibFaizi, 'Current Evaluation:', currentEvaluation); 
+    return { qaibFaizi, currentEvaluation };
 }
 // Add this new parser function to the internal parsers section
 function _extractEvaluationLinkHref(html) {

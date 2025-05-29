@@ -48,7 +48,7 @@ router.post('/login', async (req, res) => { // This is a POST route
     }
 });
 // Add a simple endpoint to check session status
-router.get('/session-check', (req, res) => {
+router.get('/check', (req, res) => {
     if (req.session && req.session.user && req.session.unecAuth) {
         res.json({
             success: true,
