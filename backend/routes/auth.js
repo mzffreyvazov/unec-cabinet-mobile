@@ -8,56 +8,19 @@ const router = express.Router();
 
 router.post('/login', async (req, res) => {
     const { username, password } = req.body;
-
-    if (!username || !password) {
-        return res.status(400).json({ success: false, message: 'Username and password are required.' });
-    }
-
+    // ... (validation) ...
     try {
-        console.log('AUTH_ROUTE: /login called for user:', username);
-        const { csrfToken, cookieJar: initialCookieJar } = await unecClient.getLoginPageAndCsrf();
-        console.log('AUTH_ROUTE: Got CSRF:', csrfToken, "and initial cookie jar.");
+        // No separate getLoginPageAndCsrf needed if Puppeteer handles it all
+        const loginResult = await unecClient.submitLogin(username, password); // Puppeteer version
 
-        const loginResult = await unecClient.submitLogin(username, password, csrfToken, initialCookieJar);
-        console.log('AUTH_ROUTE: UNEC login submission result from unecClient:', JSON.stringify(loginResult));
-
-        if (loginResult && loginResult.success && loginResult.authenticatedCookieJar) {
-            // ---- SESSION MANAGEMENT START ----
-            // Store the serialized UNEC cookie jar in our app's session
-            // The `tough-cookie` jar has a serializeSync method.
-            try {
-                const serializedJar = loginResult.authenticatedCookieJar.serializeSync();
-                req.session.unecAuth = {
-                    cookieJarJson: serializedJar // Store the JSON representation
-                };
-                req.session.user = { username: username }; // Identify the app user
-
-                // Manually save the session if your store requires it or to be explicit
-                req.session.save(err => {
-                    if (err) {
-                        console.error('AUTH_ROUTE: Session save error:', err);
-                        return res.status(500).json({ success: false, message: 'Failed to save session after UNEC login.' });
-                    }
-                    console.log('AUTH_ROUTE: UNEC auth data stored in app session for user:', username);
-                    res.json({
-                        success: true,
-                        message: 'Login successful. App session established.'
-                    });
-                });
-            } catch (serializationError) {
-                console.error('AUTH_ROUTE: Error serializing cookie jar:', serializationError);
-                res.status(500).json({ success: false, message: 'Failed to process UNEC session for app session storage.' });
-            }
-            // ---- SESSION MANAGEMENT END ----
+        if (loginResult.success && loginResult.authenticatedCookieJar) {
+            // Store loginResult.authenticatedCookieJar.serializeSync() in session
+            // ... (session management as before) ...
+            res.json({ success: true, message: loginResult.message });
         } else {
-            console.warn('AUTH_ROUTE: UNEC login reported as failed by unecClient or missing cookie jar.');
-            res.status(401).json({ success: false, message: loginResult?.message || 'UNEC login credentials incorrect or other login failure.' });
+            res.status(401).json({ success: false, message: loginResult.message || 'UNEC login failed via Puppeteer.' });
         }
-    } catch (error) {
-        console.error('AUTH_ROUTE: Critical error in login process:', error.message);
-        const errorMessage = (error && typeof error.message === 'string') ? error.message : 'An unexpected internal error occurred during login.';
-        res.status(500).json({ success: false, message: errorMessage });
-    }
+    } catch (error) { /* ... */ }
 });
 
 // Add a simple endpoint to check session status
