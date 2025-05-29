@@ -15,6 +15,7 @@
   "dependencies": {
     "axios": "^1.9.0",
     "axios-cookiejar-support": "^6.0.2",
+    "backend": "file:",
     "cheerio": "^1.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
