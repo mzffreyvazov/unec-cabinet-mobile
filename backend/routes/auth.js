@@ -6,7 +6,7 @@ import unecClient from '../services/unecClient.js';
 
 const router = express.Router();
 
-router.post('/login', async (req, res) => {
+router.post('/login', async (req, res) => { // This is a POST route
     const { username, password } = req.body;
     
     // Basic validation

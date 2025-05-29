@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UNEC Login</title>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background-color: #f0f2f5; margin: 0; }
+        .login-container { background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 320px; }
+        .login-container h1 { text-align: center; color: #333; margin-bottom: 25px; }
+        .login-container label { display: block; margin-bottom: 8px; color: #555; font-weight: bold; }
+        .login-container input[type="text"],
+        .login-container input[type="password"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        .login-container button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        .login-container button:hover { background-color: #0056b3; }
+        .error-message { color: red; text-align: center; margin-top: 15px; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>UNEC Cabinet Login</h1>
+        <form id="loginForm">
+            <div>
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div>
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <button type="submit" id="loginButton">Login</button>
+        </form>
+        <div id="loginError" class="error-message" style="display: none;"></div>
+    </div>
+
+    <script src="js/login.js"></script>
+</body>
+</html>
