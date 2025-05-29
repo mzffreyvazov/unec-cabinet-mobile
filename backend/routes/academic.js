@@ -2,79 +2,149 @@
 import express from 'express';
 import unecClient from '../services/unecClient.js';
 import appAuthMiddleware from '../middleware/auth.js';
-import { CookieJar } from 'tough-cookie';
+import { CookieJar } from 'tough-cookie'; // For deserializing
 
 const router = express.Router();
 
+// Add this route before your existing /student-data route
+router.get('/initial-data', appAuthMiddleware, async (req, res) => {
+    try {
+        console.log('ACADEMIC_ROUTE: /initial-data called for user:', req.session.user.username);
+        
+        if (!req.session.unecAuth || !req.session.unecAuth.cookieJarJson) {
+            throw new Error('UNEC authentication data not found in session.');
+        }
+        
+        // Deserialize the cookieJar from the session
+        const cookieJar = CookieJar.deserializeSync(req.session.unecAuth.cookieJarJson);
+        console.log('ACADEMIC_ROUTE: Deserialized UNEC cookie jar for initial data fetch.');
+        
+        // Get starting URL from query parameter if provided
+        const startingUrl = req.query.startingUrl || null;
+        
+        // Fetch initial academic data (years, evaluation URL, etc.)
+        const result = await unecClient.fetchInitialAcademicData(cookieJar, startingUrl);
+        
+        if (!result.success) {
+            throw new Error(result.error);
+        }
+        
+        console.log('ACADEMIC_ROUTE: Successfully fetched initial academic data');
+        res.json({
+            success: true,
+            data: {
+                evaluationPageUrl: result.data.studentEvaluationPageUrl,
+                years: result.data.allYears,
+                selectedYear: result.data.selectedYear,
+                csrfToken: result.data.csrfToken
+            }
+        });
+        
+    } catch (error) {
+        console.error('ACADEMIC_ROUTE: Error in /initial-data:', error.message);
+        res.status(500).json({ 
+            success: false, 
+            message: error.message || 'Failed to fetch initial academic data.' 
+        });
+    }
+});
+
 router.get('/student-data', appAuthMiddleware, async (req, res) => {
+    let fullProcessStartTime = Date.now();
     try {
         console.log('ACADEMIC_ROUTE: /student-data called for user:', req.session.user.username);
         if (!req.session.unecAuth || !req.session.unecAuth.cookieJarJson) {
             throw new Error('UNEC authentication data not found in session.');
         }
+        // Deserialize the cookieJar from the session
         const cookieJar = CookieJar.deserializeSync(req.session.unecAuth.cookieJarJson);
+        console.log('ACADEMIC_ROUTE: Deserialized UNEC cookie jar for subsequent requests.');
 
-        let studentEvaluationPageUrl = unecClient.BASE_URL + '/az/studentEvaluation';
-        let initialHtml, htmlWithSubjects, csrfTokenFromPage;
+        let studentEvaluationPageUrl = unecClient.BASE_URL + '/az/studentEvaluation'; // Default starting point
+        let initialHtml, htmlWithSubjects, csrfTokenForPost;
 
-        console.log('ACADEMIC_ROUTE: Fetching initial evaluation page:', studentEvaluationPageUrl);
+        // 1. Fetch initial evaluation page for years AND potential CSRF token for /getEduSemester
+        console.log('ACADEMIC_ROUTE: Fetching initial evaluation page for years:', studentEvaluationPageUrl);
         initialHtml = await unecClient.fetchAuthedPage(studentEvaluationPageUrl, cookieJar);
-        
-        csrfTokenFromPage = unecClient.parsers.extractCsrfToken(initialHtml); // Use exported parser
-        if (csrfTokenFromPage) console.log("ACADEMIC_ROUTE: CSRF from initial eval page:", csrfTokenFromPage);
-        else console.warn("ACADEMIC_ROUTE: No CSRF on initial eval page.");
+        if (!initialHtml) throw new Error("Failed to fetch initial evaluation page HTML.");
 
-        const allYears = unecClient.parsers.extractYears(initialHtml); // Use exported parser
+        csrfTokenForPost = unecClient.parsers.extractCsrfToken(initialHtml); // For /getEduSemester
+        if (csrfTokenForPost) console.log("ACADEMIC_ROUTE: CSRF from initial eval page:", csrfTokenForPost);
+        else console.warn("ACADEMIC_ROUTE: No CSRF token found on initial eval page. /getEduSemester POST might need it differently or not at all.");
+
+        // 2. Extract Years
+        const allYears = unecClient.parsers.extractYears(initialHtml);
         if (!allYears || allYears.length === 0) throw new Error("No academic years found.");
-        const selectedYear = allYears[0];
-        console.log('ACADEMIC_ROUTE: Selected Year:', selectedYear.text);
+        const selectedYear = allYears[0]; // Most recent
+        console.log('ACADEMIC_ROUTE: Selected Year:', selectedYear.text, `(ID: ${selectedYear.value})`);
 
-        // Pass the csrfTokenFromPage to getSemesters (it might be needed or not)
-        const semestersForSelectedYear = await unecClient.getSemesters(selectedYear.value, cookieJar, csrfTokenFromPage);
+        // 3. Get Semesters (POST to /getEduSemester)
+        // Pass the csrfTokenFromPage (which is csrfTokenForPost here)
+        const semestersForSelectedYear = await unecClient.getSemesters(selectedYear.value, cookieJar, csrfTokenForPost);
         if (!semestersForSelectedYear || semestersForSelectedYear.length === 0) {
-            console.warn(`ACADEMIC_ROUTE: No semesters for ${selectedYear.text}`);
-            return res.json({ success: true, data: { selectedYear, selectedSemester: null, subjectsWithGrades: [] } });
+            console.warn(`ACADEMIC_ROUTE: No semesters found for year ${selectedYear.text}.`);
+            // Return what we have so far, or an error/empty state
+            return res.json({ success: true, data: { selectedYear, selectedSemester: null, subjectsWithGrades: [], message: "No semesters found." } });
         }
         const selectedSemester = semestersForSelectedYear.find(s => s.text.includes("I semestr") || s.text.includes("Payız")) || semestersForSelectedYear[0];
-        if (!selectedSemester) throw new Error("Could not determine selected semester.");
-        console.log('ACADEMIC_ROUTE: Selected Semester:', selectedSemester.text);
+        if (!selectedSemester) throw new Error("Could not determine a selected semester.");
+        console.log('ACADEMIC_ROUTE: Selected Semester:', selectedSemester.text, `(ID: ${selectedSemester.value})`);
 
+        // 4. Get Subjects Page HTML (this page might have a new CSRF for modal popups)
         const subjectsPageUrl = `${studentEvaluationPageUrl}?eduYear=${selectedYear.value}&eduSemester=${selectedSemester.value}`;
-        console.log('ACADEMIC_ROUTE: Fetching subjects page:', subjectsPageUrl);
+        console.log('ACADEMIC_ROUTE: Fetching subjects page HTML from:', subjectsPageUrl);
         htmlWithSubjects = await unecClient.fetchAuthedPage(subjectsPageUrl, cookieJar);
-        
-        // If CSRF wasn't found initially, try again from the subjects page HTML
-        if (!csrfTokenFromPage) {
-            csrfTokenFromPage = unecClient.parsers.extractCsrfToken(htmlWithSubjects);
-            if (csrfTokenFromPage) console.log("ACADEMIC_ROUTE: CSRF from subjects page:", csrfTokenFromPage);
-            else console.warn("ACADEMIC_ROUTE: No CSRF on subjects page either. Modal POSTs might fail.");
+        if (!htmlWithSubjects) throw new Error("Failed to fetch subjects page HTML.");
+
+        // Extract CSRF token from THIS page for the modal popups
+        const csrfForModals = unecClient.parsers.extractCsrfToken(htmlWithSubjects);
+        if (csrfForModals) console.log("ACADEMIC_ROUTE: CSRF token from subjects page (for modals):", csrfForModals);
+        else console.warn("ACADEMIC_ROUTE: No CSRF token found on subjects page. Modal POSTs might fail if required.");
+
+
+        // 5. Extract Subjects (should include edu_form_id)
+        const subjects = unecClient.parsers.extractSubjects(htmlWithSubjects);
+        console.log('ACADEMIC_ROUTE: Subjects found:', subjects.length);
+        if (subjects.length === 0) {
+             return res.json({ success: true, data: { selectedYear, selectedSemester, subjectsWithGrades: [], message: "No subjects found for this semester." } });
         }
 
-        const subjects = unecClient.parsers.extractSubjects(htmlWithSubjects); // Use exported parser
-        console.log('ACADEMIC_ROUTE: Subjects found:', subjects.length);
-
+        // 6. Loop through subjects and get modal data (Qaib Faizi)
         let subjectsWithGrades = [];
-        const subjectsToProcess = subjects.slice(0, req.query.limitSubjects || 3);
+        const subjectsToProcess = subjects.slice(0, req.query.limitSubjects || 3); // Limit for testing
         console.log(`ACADEMIC_ROUTE: Will fetch modal data for ${subjectsToProcess.length} subjects.`);
 
         for (const subject of subjectsToProcess) {
-            // ... (rest of the loop for getSubjectModalData, using csrfTokenFromPage)
-            if (!subject.id || !subject.edu_form_id) { /* ... */ continue; }
+            if (!subject.id || !subject.edu_form_id) {
+                console.warn("ACADEMIC_ROUTE: Skipping subject due to missing id or edu_form_id:", subject.name);
+                subjectsWithGrades.push({ name: subject.name || "Unknown Subject", id: subject.id || "N/A", qaibFaizi: 'Data Error (Missing ID/FormID)' });
+                continue;
+            }
             try {
-                const modalEvalData = await unecClient.getSubjectModalData(subject.id, subject.edu_form_id, cookieJar, csrfTokenFromPage);
-                subjectsWithGrades.push({ name: subject.name, id: subject.id, qaibFaizi: modalEvalData.qaibFaizi || 'N/A' });
-                await new Promise(resolve => setTimeout(resolve, 200));
-            } catch (modalError) { /* ... */ subjectsWithGrades.push({ name: subject.name, id: subject.id, qaibFaizi: 'Fetch Error' }); }
+                console.log(`ACADEMIC_ROUTE: Fetching modal for subject: ${subject.name} (ID: ${subject.id}, eduFormId: ${subject.edu_form_id})`);
+                // Pass the CSRF token obtained from the subjects page (htmlWithSubjects)
+                const modalEvalData = await unecClient.getSubjectModalData(subject.id, subject.edu_form_id, cookieJar, csrfForModals);
+                subjectsWithGrades.push({
+                    name: subject.name,
+                    id: subject.id,
+                    edu_form_id: subject.edu_form_id, // Keep it for reference
+                    qaibFaizi: modalEvalData.qaibFaizi !== null ? modalEvalData.qaibFaizi : 'N/A'
+                });
+                await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 200)); // Small delay
+            } catch (modalError) {
+                console.error(`ACADEMIC_ROUTE: Error fetching/parsing modal for ${subject.name}: ${modalError.message}`);
+                subjectsWithGrades.push({ name: subject.name, id: subject.id, edu_form_id: subject.edu_form_id, qaibFaizi: 'Fetch Error' });
+            }
         }
-
+        console.log("ACADEMIC_ROUTE: Total processing time:", (Date.now() - fullProcessStartTime)/1000, "s");
         res.json({
             success: true,
             data: { selectedYear, selectedSemester, subjectsWithGrades }
         });
 
     } catch (error) {
-        console.error('ACADEMIC_ROUTE: Error fetching student data:', error.message);
-        res.status(500).json({ success: false, message: error.message || 'Failed to fetch student data.' });
+        console.error('ACADEMIC_ROUTE: Overall error in /student-data:', error.message, error.stack ? error.stack.substring(0,300) : '');
+        res.status(500).json({ success: false, message: error.message || 'Failed to fetch all student data.' });
     }
 });
 

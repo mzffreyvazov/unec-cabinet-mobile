@@ -1,6 +1,7 @@
 // backend/services/unecClient.js
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import axios from 'axios'; // Add this import
 import { CookieJar } from 'tough-cookie'; // For managing cookies for subsequent axios calls
 import * as cheerio from 'cheerio';     // For parsing HTML if needed outside Puppeteer DOM
 
@@ -92,7 +93,53 @@ function _extractFinalEvalDataFromModalHtml(modalHtml) {
     } else console.warn("UNEC_CLIENT (Parser): #finalEval div not found in modal HTML.");
     console.log('UNEC_CLIENT (Parser): Extracted Qaib Faizi:', qaibFaizi); return { qaibFaizi };
 }
-
+// Add this new parser function to the internal parsers section
+function _extractEvaluationLinkHref(html) {
+    if (!html) { 
+        console.warn('UNEC_CLIENT (Parser): HTML for evaluation link extraction is empty.'); 
+        return null; 
+    }
+    const $ = cheerio.load(html);
+    
+    // Try multiple selectors to find the evaluation link (borrowed from extension logic)
+    const selectors = [
+        '.sidebar-menu a[href*="/studentEvaluation"]',
+        'a[href*="/studentEvaluation"]',
+        '.sidebar a[href*="/studentEvaluation"]',
+        '.menu a[href*="/studentEvaluation"]',
+        'a[href*="studentEvaluation"]'
+    ];
+    
+    let evalLink = null;
+    let usedSelector = '';
+    
+    for (const selector of selectors) {
+        evalLink = $(selector);
+        if (evalLink.length > 0) {
+            usedSelector = selector;
+            console.log(`UNEC_CLIENT (Parser): Found evaluation link using selector: ${selector}`);
+            break;
+        }
+    }
+    
+    if (!evalLink || evalLink.length === 0) {
+        // Log the page structure for debugging
+        console.log('UNEC_CLIENT (Parser): Available links on page:');
+        $('a[href*="student"]').each((i, el) => {
+            console.log(`  - ${$(el).attr('href')} : ${$(el).text().trim()}`);
+        });
+        
+        throw new Error('UNEC_CLIENT (Parser): Could not find student evaluation link in any expected location. Check the page HTML structure.');
+    }
+    
+    const href = evalLink.first().attr('href');
+    if (!href || typeof href !== 'string') {
+        throw new Error('UNEC_CLIENT (Parser): Invalid href for evaluation link.');
+    }
+    
+    console.log('UNEC_CLIENT (Parser): Found evaluation link href:', href);
+    return href;
+}
 const unecClient = {
     BASE_URL: BASE_URL,
 
@@ -102,9 +149,9 @@ const unecClient = {
 
         try {
             browser = await puppeteer.launch({
-                headless: false, // Keep headful for debugging this stage
-                slowMo: 150,     // Slow down operations
-                devtools: true,  // Open DevTools in Puppeteer's browser
+                headless: true, // Keep headful for debugging this stage
+                slowMo: 0,     // Slow down operations
+                devtools: false,  // Open DevTools in Puppeteer's browser
                 args: [
                     '--disable-infobars',
                     '--window-size=1400,900', // A common desktop size
@@ -136,27 +183,27 @@ const unecClient = {
 
             // --- WARM-UP (Optional, but can help) ---
             console.log("PUPPETEER: WARM-UP - Navigating to main UNEC site (or cabinet base)");
-            await page.goto(BASE_URL, { waitUntil: 'networkidle0', timeout: 30000 });
-            await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+            await page.goto(BASE_URL, { waitUntil: 'networkidle0', timeout: 0 });
+            // await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
             await page.screenshot({ path: `puppeteer_warmup_0_mainpage_${ts}.png` });
             console.log("PUPPETEER: WARM-UP - Current URL after warmup:", page.url());
 
 
             console.log('PUPPETEER: Navigating to login page specifically:', BASE_URL + AZ_BASE_PATH);
-            await page.goto(BASE_URL + AZ_BASE_PATH, { waitUntil: 'networkidle0', timeout: 30000 });
+            await page.goto(BASE_URL + AZ_BASE_PATH, { waitUntil: 'networkidle0', timeout: 0 });
             console.log('PUPPETEER: Login page loaded. URL:', page.url());
             console.log('PUPPETEER: Pausing 7s for initial scripts/RUM beacons...');
-            await new Promise(resolve => setTimeout(resolve, 7000)); // Pause to let RUM, etc., fire
+            // await new Promise(resolve => setTimeout(resolve, 7000)); // Pause to let RUM, etc., fire
             await page.screenshot({ path: `puppeteer_login_0_loginpage_after_wait_${ts}.png` });
 
 
             console.log('PUPPETEER: Filling form...');
-            await page.waitForSelector('input[name="LoginForm[username]"]', { timeout: 15000 });
+            await page.waitForSelector('input[name="LoginForm[username]"]', { timeout: 0 });
             const csrfOnLoad = await page.$eval('input[name="csrf_token"]', el => el.value).catch(() => null);
             console.log("PUPPETEER: CSRF token on page load:", csrfOnLoad);
 
-            await page.type('input[name="LoginForm[username]"]', username, { delay: 100 + Math.random() * 50 });
-            await page.type('input[name="LoginForm[password]"]', password, { delay: 120 + Math.random() * 50 });
+            await page.type('input[name="LoginForm[username]"]', username, { delay: 0 + Math.random() * 0 });
+            await page.type('input[name="LoginForm[password]"]', password, { delay: 0 + Math.random() * 0 });
 
             const csrfBeforeClick = await page.$eval('input[name="csrf_token"]', el => el.value).catch(() => null);
             console.log("PUPPETEER: CSRF token value from DOM just before click:", csrfBeforeClick);
@@ -179,7 +226,7 @@ const unecClient = {
                         const isDashboardUrl = currentUrl.includes('/az/noteandannounce') || currentUrl.includes('/az/index');
                         return (currentUrl !== initialUrl && isDashboardUrl) || dashboardElementExists;
                     },
-                    { timeout: 25000 }, // 25 seconds
+                    { timeout: 0 }, // 25 seconds
                     finalUrl // Pass initial URL to the function
                 );
                 finalUrl = page.url(); // Update finalUrl after successful wait
@@ -226,11 +273,11 @@ const unecClient = {
             if(page) await page.screenshot({ path: `puppeteer_4_error_state_${ts}.png` }).catch(e => console.error("Screenshot on error failed:", e));
             return { success: false, authenticatedCookieJar: null, message: `Puppeteer login error: ${error.message}` };
         } finally {
-            const DEBUG_MODE_PUPPETEER = true; // Keep true for debugging this
+            const DEBUG_MODE_PUPPETEER = false; // Keep true for debugging this
             if (browser && browser.isConnected()) {
                 if (DEBUG_MODE_PUPPETEER) {
                     console.log("UNEC_CLIENT (Puppeteer): DEBUG MODE - Browser will stay open for 60s. Close manually or wait.");
-                    await new Promise(resolve => setTimeout(resolve, 60000)); // 60 seconds
+                    // await new Promise(resolve => setTimeout(resolve, 10000)); // 60 seconds
                     if (browser.isConnected()) await browser.close().catch(e => console.error("Error closing browser in finally:",e));
                 } else {
                     await browser.close().catch(e => console.error("Error closing browser in finally:",e));
@@ -246,10 +293,28 @@ const unecClient = {
     async fetchAuthedPage(urlPath, cookieJar) {
         const fullUrl = urlPath.startsWith('http') ? urlPath : BASE_URL + urlPath;
         console.log(`UNEC_CLIENT (Axios): Fetching authed page: GET ${fullUrl}`);
+        
         try {
-            const response = await axios.get(fullUrl, { jar: cookieJar, withCredentials: true, headers: defaultGetHeaders });
+            const cookieString = await cookieJar.getCookieString(fullUrl);
+            const headers = {
+                ...defaultGetHeaders,
+                'Cookie': cookieString
+            };
+            console.log(`UNEC_CLIENT (Axios): Using Cookie header for GET ${fullUrl}: ${cookieString ? cookieString.substring(0, 50) + '...' : 'None'}`);
+
+            const response = await axios.get(fullUrl, { headers: headers });
             return response.data;
-        } catch (error) { console.error(`UNEC_CLIENT (Axios): Error fetching ${fullUrl}: ${error.message}`); throw error; }
+        } catch (error) { 
+            console.error(`UNEC_CLIENT (Axios): Error fetching ${fullUrl}: ${error.message}`); 
+            if (error.response) {
+                console.error(`UNEC_CLIENT (Axios): Response status: ${error.response.status}`);
+                // console.error(`UNEC_CLIENT (Axios): Response headers:`, JSON.stringify(error.response.headers, null, 2));
+                if (typeof error.response.data === 'string' && error.response.data.toLowerCase().includes('loginform')) {
+                    console.error(`UNEC_CLIENT (Axios): Response data snippet (likely login page): ${error.response.data.substring(0, 300)}...`);
+                }
+            }
+            throw error; 
+        }
     },
 
     async getSemesters(yearId, cookieJar, csrfToken) { // csrfToken might be needed here
@@ -259,11 +324,18 @@ const unecClient = {
         formData.append('type', 'eduYear'); formData.append('id', yearId);
         // if (csrfToken) formData.append('YII_CSRF_TOKEN', csrfToken); // Add if UNEC requires CSRF for this POST
 
-        const headersForSemesterPost = {...defaultPostHeaders, Referer: BASE_URL + STUDENT_EVAL_PATH, 'X-Requested-With': 'XMLHttpRequest' };
+        const cookieString = await cookieJar.getCookieString(url);
+        const headersForSemesterPost = {
+            ...defaultPostHeaders, 
+            Referer: BASE_URL + STUDENT_EVAL_PATH, 
+            'X-Requested-With': 'XMLHttpRequest',
+            'Cookie': cookieString
+        };
+        console.log(`UNEC_CLIENT (Axios): Using Cookie header for POST ${url}: ${cookieString ? cookieString.substring(0, 50) + '...' : 'None'}`);
         // if (csrfToken) headersForSemesterPost['X-YII-CSRF-TOKEN'] = csrfToken; // Example if CSRF is via header for AJAX
 
         try {
-            const response = await axios.post(url, formData.toString(), { jar: cookieJar, withCredentials: true, headers: headersForSemesterPost });
+            const response = await axios.post(url, formData.toString(), { headers: headersForSemesterPost });
             if (!response.data) throw new Error("Empty response from getEduSemester POST.");
             console.log("UNEC_CLIENT (Axios): Raw HTML from getEduSemester POST (first 300):", response.data.substring(0,300));
             return _extractSemestersFromOptionsHtml(response.data);
@@ -276,7 +348,15 @@ const unecClient = {
         const formData = new URLSearchParams();
         formData.append('id', subjectId); formData.append('lessonType', ''); formData.append('edu_form_id', eduFormId);
 
-        const headersForModalPost = {...defaultPostHeaders, Referer: BASE_URL + STUDENT_EVAL_PATH, 'X-Requested-With': 'XMLHttpRequest' };
+        const cookieString = await cookieJar.getCookieString(url);
+        const headersForModalPost = {
+            ...defaultPostHeaders, 
+            Referer: BASE_URL + STUDENT_EVAL_PATH, 
+            'X-Requested-With': 'XMLHttpRequest',
+            'Cookie': cookieString 
+        };
+        console.log(`UNEC_CLIENT (Axios): Using Cookie header for POST ${url}: ${cookieString ? cookieString.substring(0, 50) + '...' : 'None'}`);
+
         if (csrfToken) {
              formData.append('YII_CSRF_TOKEN', csrfToken); // Standard Yii form CSRF
              // if you suspect it needs header CSRF too for AJAX:
@@ -286,18 +366,169 @@ const unecClient = {
             console.warn("UNEC_CLIENT (Axios): No CSRF provided for modal POST. It may fail.");
         }
         try {
-            const response = await axios.post(url, formData.toString(), { jar: cookieJar, withCredentials: true, headers: headersForModalPost });
+            const response = await axios.post(url, formData.toString(), { headers: headersForModalPost });
             if (!response.data) throw new Error(`Empty modal HTML for subject ${subjectId}`);
             return _extractFinalEvalDataFromModalHtml(response.data);
         } catch (error) { console.error(`UNEC_CLIENT (Axios): Error in getSubjectModalData for subject ${subjectId}: ${error.message}`); throw error; }
     },
 
+    // Function to get student evaluation URL from note/announce page
+async getStudentEvalUrlFromNotePageHTML(pageHtml, cookieJar) {
+    if (!pageHtml) throw new Error('UNEC_CLIENT: HTML for note/announce page is empty.');
+    
+    const $ = cheerio.load(pageHtml);
+    
+    // Try multiple selectors to find the evaluation link
+    const selectors = [
+        '.sidebar-menu a[href*="/studentEvaluation"]',
+        'a[href*="/studentEvaluation"]',
+        '.sidebar a[href*="/studentEvaluation"]',
+        '.menu a[href*="/studentEvaluation"]',
+        'a[href*="studentEvaluation"]'
+    ];
+    
+    let evalLink = null;
+    let usedSelector = '';
+    
+    for (const selector of selectors) {
+        evalLink = $(selector);
+        if (evalLink.length > 0) {
+            usedSelector = selector;
+            console.log(`UNEC_CLIENT: Found evaluation link using selector: ${selector}`);
+            break;
+        }
+    }
+    
+    if (!evalLink || evalLink.length === 0) {
+        // Log the page structure for debugging
+        console.log('UNEC_CLIENT: Available links on page:');
+        $('a[href*="student"]').each((i, el) => {
+            console.log(`  - ${$(el).attr('href')} : ${$(el).text().trim()}`);
+        });
+        
+        throw new Error('UNEC_CLIENT: Could not find student evaluation link in any expected location. Check the page HTML structure.');
+    }
+    
+    const href = evalLink.first().attr('href');
+    if (!href || typeof href !== 'string') {
+        throw new Error('UNEC_CLIENT: Invalid href for evaluation link.');
+    }
+    
+    // Convert relative URL to absolute
+    const fullUrl = href.startsWith('http') ? href : new URL(href, BASE_URL).href;
+    console.log('UNEC_CLIENT: Found student evaluation URL:', fullUrl);
+    return fullUrl;
+},
+
+    // Function to extract academic years from evaluation page
+    async extractYearsFromEvalPageHTML(pageHtml) {
+        if (!pageHtml) throw new Error('UNEC_CLIENT: HTML for year extraction is empty.');
+        
+        const $ = cheerio.load(pageHtml);
+        const years = [];
+        
+        $('#eduYear option').each((i, el) => {
+            const value = $(el).val();
+            const text = $(el).text().trim();
+            if (value && value.trim() !== "") {
+                years.push({ value, text });
+            }
+        });
+        
+        // Sort by year (newest first)
+        years.sort((a, b) => {
+            const yearA = parseInt(a.text.split(' - ')[0]);
+            const yearB = parseInt(b.text.split(' - ')[0]);
+            return yearB - yearA;
+        });
+        
+        console.log('UNEC_CLIENT: Extracted years count:', years.length);
+        return years;
+    },
+
+// Update the fetchInitialAcademicData function
+async fetchInitialAcademicData(cookieJar, startingUrl = null) {
+    console.log('UNEC_CLIENT: Fetching initial academic data...');
+    
+    let studentEvaluationPageUrl;
+    let initialHtmlForYears;
+    
+    try {
+        // Always start from note/announce page to get the evaluation link
+        const noteAndAnnounceUrl = startingUrl || (BASE_URL + '/az/noteandannounce');
+        
+        console.log('UNEC_CLIENT: Starting from note/announce page:', noteAndAnnounceUrl);
+        const noteHtml = await this.fetchAuthedPage(noteAndAnnounceUrl, cookieJar);
+        
+        if (!noteHtml) {
+            throw new Error('Failed to fetch note/announce page HTML');
+        }
+        console.log('UNEC_CLIENT: Fetched note/announce page HTML (first 300 chars):', typeof noteHtml === 'string' ? noteHtml.substring(0, 300) : '[Non-string response]'); 
+        
+        // Extract the evaluation link from the note/announce page sidebar
+        const evaluationLinkHref = _extractEvaluationLinkHref(noteHtml);
+        
+        // Convert relative URL to absolute
+        studentEvaluationPageUrl = evaluationLinkHref.startsWith('http') 
+            ? evaluationLinkHref 
+            : new URL(evaluationLinkHref, BASE_URL).href;
+        
+        console.log('UNEC_CLIENT: Student evaluation URL found:', studentEvaluationPageUrl);
+        
+        // Now fetch the actual evaluation page to get years
+        initialHtmlForYears = await this.fetchAuthedPage(studentEvaluationPageUrl, cookieJar);
+        
+        if (!initialHtmlForYears) {
+            throw new Error('Failed to fetch initial evaluation page HTML');
+        }
+        
+        console.log('UNEC_CLIENT: Successfully fetched evaluation page for year extraction');
+        
+        // Extract academic years
+        const allYears = await this.extractYearsFromEvalPageHTML(initialHtmlForYears);
+        if (!allYears || allYears.length === 0) {
+            throw new Error('No academic years found on the page');
+        }
+        
+        // Select the most recent year (first in sorted array)
+        const selectedYear = allYears[0];
+        console.log(`UNEC_CLIENT: Selected Year: ${selectedYear.text} (ID: ${selectedYear.value})`);
+        
+        // Extract CSRF token for future requests
+        const csrfToken = this.parsers.extractCsrfToken(initialHtmlForYears);
+        if (csrfToken) {
+            console.log('UNEC_CLIENT: CSRF token found for future requests');
+        } else {
+            console.warn('UNEC_CLIENT: No CSRF token found on initial page');
+        }
+        
+        return {
+            success: true,
+            data: {
+                studentEvaluationPageUrl,
+                allYears,
+                selectedYear,
+                csrfToken,
+                initialHtml: initialHtmlForYears
+            }
+        };
+        
+    } catch (error) {
+        console.error('UNEC_CLIENT: Error fetching initial academic data:', error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+},
+ 
     parsers: {
         extractYears: _extractYears,
         extractSubjects: _extractSubjects,
         extractCsrfToken: _extractCsrfTokenFromHtml,
         extractSemestersFromOptions: _extractSemestersFromOptionsHtml,
-        extractFinalEvalData: _extractFinalEvalDataFromModalHtml
+        extractFinalEvalData: _extractFinalEvalDataFromModalHtml,
+        extractEvaluationLinkHref: _extractEvaluationLinkHref // Add the new parser here
     }
 };
 

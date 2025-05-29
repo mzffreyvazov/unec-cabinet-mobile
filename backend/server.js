@@ -31,8 +31,14 @@ app.use(session({
 
 // Log session middleware activity
 app.use((req, res, next) => {
-    console.log('SERVER: Session ID:', req.sessionID);
-    console.log('SERVER: Session user:', req.session.user);
+    console.log(`SERVER_LOG: Request to ${req.method} ${req.originalUrl}`);
+    console.log('SERVER_LOG: Incoming Cookies:', req.headers.cookie || 'None'); // Log raw cookie header
+    console.log('SERVER_LOG: req.sessionID:', req.sessionID);
+    console.log('SERVER_LOG: req.session.user:', req.session.user);
+    console.log('SERVER_LOG: req.session.unecAuth exists:', !!req.session.unecAuth);
+    if (req.session.unecAuth) {
+        console.log('SERVER_LOG: req.session.unecAuth.cookieJarJson exists:', !!req.session.unecAuth.cookieJarJson);
+    }
     next();
 });
 

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UNEC Academic Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+            display: none;
+        }
+        .year-semester {
+            background: #d4edda;
+            color: #155724;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            text-align: center;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .btn:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>UNEC Academic Dashboard</h1>
+            <button class="btn" onclick="loadDashboardData()">Refresh Data</button>
+            <button class="btn" onclick="logout()">Logout</button>
+        </div>
+
+        <div id="loading" class="loading">Loading academic data...</div>
+        <div id="error" class="error"></div>
+
+        <div id="summary-container" style="display: none;">
+            <div class="year-semester">
+                <strong>Academic Period: </strong>
+                <span id="selectedYearSemesterText">Loading...</span>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Subject</th>
+                        <th>Grade (Qaib Faizi)</th>
+                    </tr>
+                </thead>
+                <tbody id="gradesTableBody">
+                    <!-- Grades will be populated here -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+        // Load data when page loads
+        document.addEventListener('DOMContentLoaded', loadDashboardData);
+
+        async function logout() {
+            try {
+                const response = await fetch('/api/auth/logout', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                if (response.ok) {
+                    window.location.href = 'login.html';
+                }
+            } catch (error) {
+                console.error('Logout failed:', error);
+            }
+        }
+    </script>
+</body>
+</html>

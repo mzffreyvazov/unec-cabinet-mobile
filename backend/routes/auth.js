@@ -8,21 +8,45 @@ const router = express.Router();
 
 router.post('/login', async (req, res) => {
     const { username, password } = req.body;
-    // ... (validation) ...
-    try {
+    
+    // Basic validation
+    if (!username || !password) {
+        return res.status(400).json({ success: false, message: 'Username and password are required.' });
+    }
+    
+    try {   
         // No separate getLoginPageAndCsrf needed if Puppeteer handles it all
         const loginResult = await unecClient.submitLogin(username, password); // Puppeteer version
 
         if (loginResult.success && loginResult.authenticatedCookieJar) {
-            // Store loginResult.authenticatedCookieJar.serializeSync() in session
-            // ... (session management as before) ...
-            res.json({ success: true, message: loginResult.message });
+            // Store user data and serialized cookie jar in session
+            req.session.user = {
+                username: username,
+                loginTime: new Date().toISOString()
+            };
+            
+            req.session.unecAuth = {
+                cookieJarJson: loginResult.authenticatedCookieJar.serializeSync(),
+                authenticatedAt: new Date().toISOString()
+            };
+            
+            // Save the session
+            req.session.save((err) => {
+                if (err) {
+                    console.error('AUTH_ROUTE: Error saving session:', err);
+                    return res.status(500).json({ success: false, message: 'Failed to save session.' });
+                }
+                console.log('AUTH_ROUTE: Session saved successfully for user:', username);
+                res.json({ success: true, message: loginResult.message });
+            });
         } else {
             res.status(401).json({ success: false, message: loginResult.message || 'UNEC login failed via Puppeteer.' });
         }
-    } catch (error) { /* ... */ }
+    } catch (error) { 
+        console.error('AUTH_ROUTE: Login error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error during login.' });
+    }
 });
-
 // Add a simple endpoint to check session status
 router.get('/session-check', (req, res) => {
     if (req.session && req.session.user && req.session.unecAuth) {
