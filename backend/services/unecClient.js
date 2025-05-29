@@ -69,17 +69,40 @@ function _extractSemestersFromOptionsHtml(html) {
 
 function _extractSubjects(html) {
     if (!html) { console.warn('UNEC_CLIENT (Parser): HTML for subject extraction is empty.'); return []; }
-    const $ = cheerio.load(html); const subjects = [];
+    const $ = cheerio.load(html);
+    const subjects = [];
+    let skippedForMissingIdName = 0;
+
     $('#studentEvaluation-grid tbody tr:not(.empty)').each((i, row) => {
         const cells = $(row).find('td');
-        if (cells.length >= 6) {
-            const id = $(cells[1]).text().trim();
-            const name = $(cells[2]).text().trim();
-            const eduFormId = $(cells[5]).text().trim();
-            if (id && name && eduFormId) subjects.push({ id, name, edu_form_id: eduFormId });
+        
+        // Extract ID and Name - these are essential for listing a subject
+        const id = cells.length > 1 ? $(cells[1]).text().trim() : null;
+        const name = cells.length > 2 ? $(cells[2]).text().trim() : null;
+        
+        // Attempt to extract edu_form_id, typically from cells[5]
+        // It's needed for fetching grades but not strictly for listing the subject itself.
+        const eduFormId = cells.length > 5 ? $(cells[5]).text().trim() : null;
+
+        if (id && name) { // If we have an ID and a Name, consider it a subject
+            subjects.push({
+                id,
+                name,
+                edu_form_id: eduFormId || null // Store null if eduFormId wasn't found or was empty
+            });
+        } else {
+            skippedForMissingIdName++;
+            console.warn(`UNEC_CLIENT (Parser): Skipped subject row due to missing ID or Name. Row index: ${i}, Cells count: ${cells.length}, Extracted ID: '${id}', Extracted Name: '${name}'`);
+            // For deeper debugging, you could log the row's HTML:
+            // console.log(`UNEC_CLIENT (Parser): Skipped row HTML: ${$(row).html()}`);
         }
     });
-    console.log('UNEC_CLIENT (Parser): Extracted subjects count:', subjects.length); return subjects;
+
+    if (skippedForMissingIdName > 0) {
+        console.warn(`UNEC_CLIENT (Parser): Total subject rows skipped (missing ID/Name): ${skippedForMissingIdName}`);
+    }
+    console.log('UNEC_CLIENT (Parser): Extracted subjects count (more lenient):', subjects.length);
+    return subjects;
 }
 
 function _extractFinalEvalDataFromModalHtml(modalHtml) {
@@ -345,6 +368,12 @@ const unecClient = {
     async getSubjectModalData(subjectId, eduFormId, cookieJar, csrfToken) {
         const url = BASE_URL + STUDENT_EVAL_POPUP_PATH;
         console.log(`UNEC_CLIENT (Axios): Fetching modal data for subject ${subjectId}, eduFormId ${eduFormId} from ${url}`);
+        // Ensure eduFormId is not null or empty before making the request,
+        // though the calling code in academic.js should now guard this.
+        if (!eduFormId) {
+            console.warn(`UNEC_CLIENT (Axios): Attempted to get modal data for subject ${subjectId} with no eduFormId. Returning empty.`);
+            return { qaibFaizi: null }; // Or throw an error, depending on desired handling
+        }
         const formData = new URLSearchParams();
         formData.append('id', subjectId); formData.append('lessonType', ''); formData.append('edu_form_id', eduFormId);
 

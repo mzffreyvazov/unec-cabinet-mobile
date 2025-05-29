@@ -86,8 +86,24 @@ router.get('/student-data', appAuthMiddleware, async (req, res) => {
             // Return what we have so far, or an error/empty state
             return res.json({ success: true, data: { selectedYear, selectedSemester: null, subjectsWithGrades: [], message: "No semesters found." } });
         }
-        const selectedSemester = semestersForSelectedYear.find(s => s.text.includes("I semestr") || s.text.includes("Payız")) || semestersForSelectedYear[0];
-        if (!selectedSemester) throw new Error("Could not determine a selected semester.");
+
+        // Prioritize "II semestr" or "Yaz", then fall back to the last semester in the list
+        let selectedSemester = 
+            semestersForSelectedYear.find(s => s.text.includes("II semestr")) ||
+            semestersForSelectedYear.find(s => s.text.toLowerCase().includes("yaz")) || // "Yaz" (Spring)
+            (semestersForSelectedYear.length > 0 ? semestersForSelectedYear[semestersForSelectedYear.length - 1] : null);
+        
+        // As a final fallback if the above logic results in null (e.g. empty array initially, though checked)
+        // or if specific keywords aren't present and we want to ensure we pick *something* if available.
+        // The previous logic already handles empty array by assigning null.
+        // If only "I semestr" or "Payız" is available, the last element logic would pick it.
+        if (!selectedSemester && semestersForSelectedYear.length > 0) {
+            // This case should ideally be covered by `semestersForSelectedYear[semestersForSelectedYear.length - 1]`
+            // but as an explicit fallback if the list has items but no keywords matched.
+            selectedSemester = semestersForSelectedYear[semestersForSelectedYear.length - 1];
+        }
+
+        if (!selectedSemester) throw new Error("Could not determine a selected semester from the available options.");
         console.log('ACADEMIC_ROUTE: Selected Semester:', selectedSemester.text, `(ID: ${selectedSemester.value})`);
 
         // 4. Get Subjects Page HTML (this page might have a new CSRF for modal popups)
@@ -101,7 +117,6 @@ router.get('/student-data', appAuthMiddleware, async (req, res) => {
         if (csrfForModals) console.log("ACADEMIC_ROUTE: CSRF token from subjects page (for modals):", csrfForModals);
         else console.warn("ACADEMIC_ROUTE: No CSRF token found on subjects page. Modal POSTs might fail if required.");
 
-
         // 5. Extract Subjects (should include edu_form_id)
         const subjects = unecClient.parsers.extractSubjects(htmlWithSubjects);
         console.log('ACADEMIC_ROUTE: Subjects found:', subjects.length);
@@ -111,7 +126,9 @@ router.get('/student-data', appAuthMiddleware, async (req, res) => {
 
         // 6. Loop through subjects and get modal data (Qaib Faizi)
         let subjectsWithGrades = [];
-        const subjectsToProcess = subjects.slice(0, req.query.limitSubjects || 3); // Limit for testing
+        // Remove the slice to process all subjects
+        // const subjectsToProcess = subjects.slice(0, req.query.limitSubjects || 3); // Limit for testing
+        const subjectsToProcess = subjects; // Process all extracted subjects
         console.log(`ACADEMIC_ROUTE: Will fetch modal data for ${subjectsToProcess.length} subjects.`);
 
         for (const subject of subjectsToProcess) {
