@@ -1,6 +1,8 @@
 // backend/routes/auth.js
 import express from 'express';
-import unecClient from '../services/unecClient.js'; // Make sure path and .js are correct
+import unecClient from '../services/unecClient.js';
+// We will need CookieJar to deserialize later, but not for storing here directly
+// import { CookieJar } from 'tough-cookie';
 
 const router = express.Router();
 
@@ -14,34 +16,77 @@ router.post('/login', async (req, res) => {
     try {
         console.log('AUTH_ROUTE: /login called for user:', username);
         const { csrfToken, cookieJar: initialCookieJar } = await unecClient.getLoginPageAndCsrf();
-        console.log('AUTH_ROUTE: Got CSRF and initial jar.');
+        console.log('AUTH_ROUTE: Got CSRF:', csrfToken, "and initial cookie jar.");
 
         const loginResult = await unecClient.submitLogin(username, password, csrfToken, initialCookieJar);
-        console.log('AUTH_ROUTE: UNEC login submission result success from unecClient:', loginResult.success); // Log the actual success value
+        console.log('AUTH_ROUTE: UNEC login submission result from unecClient:', JSON.stringify(loginResult));
 
-        if (loginResult.success && loginResult.authenticatedCookieJar) { // Check for authenticatedCookieJar too
-            console.log('AUTH_ROUTE: UNEC Login successful. Proceeding to session management (TODO).');
-            // TODO: IMPORTANT! Securely manage the session.
-            // This is where you would interact with your sessionManager.js
-            // For now, we are just sending success.
+        if (loginResult && loginResult.success && loginResult.authenticatedCookieJar) {
+            // ---- SESSION MANAGEMENT START ----
+            // Store the serialized UNEC cookie jar in our app's session
+            // The `tough-cookie` jar has a serializeSync method.
+            try {
+                const serializedJar = loginResult.authenticatedCookieJar.serializeSync();
+                req.session.unecAuth = {
+                    cookieJarJson: serializedJar // Store the JSON representation
+                };
+                req.session.user = { username: username }; // Identify the app user
 
-            // const cookiesForClient = await loginResult.authenticatedCookieJar.getCookies(BASE_URL); // BASE_URL needs to be accessible or passed
-            // console.log('AUTH_ROUTE: Authenticated UNEC cookies (for potential server-side storage):', cookiesForClient.map(c => c.cookieString()));
-
-            res.json({
-                success: true,
-                message: 'Proxy login to UNEC deemed successful by unecClient.'
-                // DO NOT send UNEC cookies to client in production without encryption/session ID
-            });
+                // Manually save the session if your store requires it or to be explicit
+                req.session.save(err => {
+                    if (err) {
+                        console.error('AUTH_ROUTE: Session save error:', err);
+                        return res.status(500).json({ success: false, message: 'Failed to save session after UNEC login.' });
+                    }
+                    console.log('AUTH_ROUTE: UNEC auth data stored in app session for user:', username);
+                    res.json({
+                        success: true,
+                        message: 'Login successful. App session established.'
+                    });
+                });
+            } catch (serializationError) {
+                console.error('AUTH_ROUTE: Error serializing cookie jar:', serializationError);
+                res.status(500).json({ success: false, message: 'Failed to process UNEC session for app session storage.' });
+            }
+            // ---- SESSION MANAGEMENT END ----
         } else {
             console.warn('AUTH_ROUTE: UNEC login reported as failed by unecClient or missing cookie jar.');
-            res.status(401).json({ success: false, message: loginResult.message || 'UNEC login failed as reported by client.' });
+            res.status(401).json({ success: false, message: loginResult?.message || 'UNEC login credentials incorrect or other login failure.' });
         }
-    } catch (error) { // This is where your error is being caught
-        console.error('AUTH_ROUTE: Login process error:', error.message); // This is logged
-        console.error('AUTH_ROUTE: Error stack:', error.stack ? error.stack.split('\n').slice(0,5).join('\n') : "No stack");
-        res.status(500).json({ success: false, message: error.message || 'An internal error occurred during login.' });
+    } catch (error) {
+        console.error('AUTH_ROUTE: Critical error in login process:', error.message);
+        const errorMessage = (error && typeof error.message === 'string') ? error.message : 'An unexpected internal error occurred during login.';
+        res.status(500).json({ success: false, message: errorMessage });
     }
 });
+
+// Add a simple endpoint to check session status
+router.get('/session-check', (req, res) => {
+    if (req.session && req.session.user && req.session.unecAuth) {
+        res.json({
+            success: true,
+            message: 'User is authenticated with the app.',
+            user: req.session.user,
+            hasUnecAuth: req.session.unecAuth.cookieJarJson ? "Yes (serialized)" : "No"
+        });
+    } else {
+        res.status(401).json({ success: false, message: 'User not authenticated with the app.' });
+    }
+});
+
+// Add a logout endpoint for your app
+router.post('/logout', (req, res) => {
+    req.session.destroy(err => {
+        if (err) {
+            console.error('AUTH_ROUTE: Error destroying session:', err);
+            return res.status(500).json({ success: false, message: 'Failed to log out.' });
+        }
+        // Optional: Clear the cookie on the client side as well, though destroying session should be enough
+        res.clearCookie('connect.sid'); // Default cookie name for express-session, check your config
+        console.log('AUTH_ROUTE: Session destroyed, user logged out.');
+        res.json({ success: true, message: 'Logged out successfully.' });
+    });
+});
+
 
 export default router;
